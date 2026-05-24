@@ -262,4 +262,4 @@ async def obfuscate(interaction: discord.Interaction, file: discord.Attachment, 
     except Exception:
         pass
 
-client.run(os.environ["MTUwMTIxNzM4ODEzNjIzOTIzNA.GOo_hb._9UdhED7PBNagh5jSWptJSNSOIDlv6kf3YXWc8"])
+client.run(os.environ["TOKEN"])
