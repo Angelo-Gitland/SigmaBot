@@ -274,7 +274,8 @@ async def say(interaction: discord.Interaction, message: str):
     app_commands.Choice(name="Ban", value="ban"),
 ])
 @app_commands.checks.has_permissions(manage_guild=True)
-async def honeypot(
+async def honeyp
+ot(
     interaction: discord.Interaction,
     channel: discord.TextChannel,
     message: str = None,
@@ -297,7 +298,7 @@ async def honeypot(
     label = "Kicks" if punishment == "kick" else "Bans"
 
     embed = discord.Embed(title=title, description=description, color=0xF4A732)
-    embed.add_field(name=f"🥚 {label}", value="0", inline=True)
+    embed.add_field(name=f"{label}", value="0", inline=True)
 
     try:
         sent = await channel.send(embed=embed)
