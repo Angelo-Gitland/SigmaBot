@@ -2,11 +2,10 @@ import discord
 from discord import app_commands
 import re
 import os
-from datetime import timedelta
+import time
 import firebase_admin
 from firebase_admin import credentials, firestore
 
-# Firebase setup
 cred = credentials.Certificate({
     "type": "service_account",
     "project_id": os.getenv("FIREBASE_PROJECT_ID"),
@@ -19,71 +18,70 @@ db = firestore.client()
 
 class BotClient(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        super().__init__(intents=discord.Intents.all())
         self.tree = app_commands.CommandTree(self)
 
     async def on_ready(self):
         await self.tree.sync()
         print(f"Logged in as {self.user} | Synced commands!")
 
-    async def on_disconnect(self):
-        print("[DISCONNECT] Bot disconnected from Discord!")
-
-    async def on_resumed(self):
-        print("[RECONNECT] Bot reconnected successfully!")
-
-    async def on_error(self, event, *args, **kwargs):
-        print(f"[ERROR] An error occurred in event {event}")
-        import traceback
-        traceback.print_exc()
-
     async def on_message(self, message):
         if message.author.bot:
             return
 
+        afk_ref = db.collection("afk").document(str(message.author.id))
+        afk_doc = afk_ref.get()
+        if afk_doc.exists:
+            data = afk_doc.to_dict()
+            await message.channel.send(f"{message.author.mention} Welcome back! You were last seen <t:{data['time']}:R>.")
+            afk_ref.delete()
+
+        for mention in message.mentions:
+            if mention.id == message.author.id:
+                continue
+            
+            afk_data = db.collection("afk").document(str(mention.id)).get()
+            if afk_data.exists:
+                data = afk_data.to_dict()
+                await message.channel.send(f"{mention.name} is currently afk. They were last seen <t:{data['time']}:R>.\n- Reason: {data['reason']}")
+
         doc_ref = db.collection("sticky").document(str(message.channel.id))
         doc = doc_ref.get()
 
-        if not doc.exists:
-            return
+        if doc.exists:
+            data = doc.to_dict()
+            if data.get("enabled", True):
+                message_count = data.get("message_count", 0) + 1
+                duration = data.get("duration", 5)
+                sticky_message = data.get("message", "")
+                last_message_id = data.get("last_message_id", None)
 
-        data = doc.to_dict()
-        if not data.get("enabled", True):
-            return
+                if message_count >= duration:
+                    if last_message_id:
+                        try:
+                            old_msg = await message.channel.fetch_message(int(last_message_id))
+                            await old_msg.delete()
+                        except (discord.NotFound, discord.Forbidden):
+                            pass
 
-        message_count = data.get("message_count", 0) + 1
-        duration = data.get("duration", 5)
-        sticky_message = data.get("message", "")
-        last_message_id = data.get("last_message_id", None)
-
-        if message_count >= duration:
-            if last_message_id:
-                try:
-                    old_msg = await message.channel.fetch_message(int(last_message_id))
-                    await old_msg.delete()
-                except (discord.NotFound, discord.Forbidden):
-                    pass
-
-            new_msg = await message.channel.send(f"**Stickied Message:**\n\n{sticky_message}")
-            doc_ref.update({
-                "last_message_id": str(new_msg.id),
-                "message_count": 0
-            })
-        else:
-            doc_ref.update({"message_count": message_count})
+                    new_msg = await message.channel.send(f"**Stickied Message:**\n\n{sticky_message}")
+                    doc_ref.update({
+                        "last_message_id": str(new_msg.id),
+                        "message_count": 0
+                    })
+                else:
+                    doc_ref.update({"message_count": message_count})
 
 client = BotClient()
 
-@client.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    print(f"[ERROR] Error occurred: {error}")
-    try:
-        if interaction.response.is_done():
-            await interaction.followup.send("An error occurred while running this command!", ephemeral=True)
-        else:
-            await interaction.response.send_message("An error occurred while running this command!", ephemeral=True)
-    except Exception:
-        pass
+@client.tree.command(name="afk", description="Set your status as afk.")
+@app_commands.describe(reason="Set a reason why are you afk? (Optional)")
+async def afk(interaction: discord.Interaction, reason: str = "No reason provided"):
+    db.collection("afk").document(str(interaction.user.id)).set({
+        "reason": reason,
+        "time": int(time.time())
+    })
+    await interaction.response.send_message(f"{interaction.user.mention}, your AFK status has been set.", ephemeral=True)
 
 @client.tree.command(name="kick", description="kick a user")
 @app_commands.describe(user="Select a members to kick.", reason="Reason to kick (Optional).")
@@ -103,29 +101,6 @@ async def kick(interaction: discord.Interaction, user: discord.Member, reason: s
         await interaction.response.send_message(f"Successfully kicked {user.mention}. Reason: {reason}")
     except discord.Forbidden:
         await interaction.response.send_message("I do not have permissions to kick this user!", ephemeral=True)
-
-@kick.error
-async def kick_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
-
-def parse_duration_to_seconds(duration_str: str) -> int:
-    if not duration_str:
-        return 0
-    match = re.match(r"^(\d+)([smhd])$", duration_str.strip().lower())
-    if not match:
-        return 0
-    amount = int(match.group(1))
-    unit = match.group(2)
-    if unit == 's':
-        return amount
-    elif unit == 'm':
-        return amount * 60
-    elif unit == 'h':
-        return amount * 3600
-    elif unit == 'd':
-        return amount * 86400
-    return 0
 
 @client.tree.command(name="ban", description="Ban a user.")
 @app_commands.describe(user="User to ban.", reason="Reason to ban (Optional).", duration="Duration to hide message activities for this user (Optional).")
@@ -149,10 +124,23 @@ async def ban(interaction: discord.Interaction, user: discord.Member, reason: st
     except discord.Forbidden:
         await interaction.response.send_message("I do not have permission to ban this user!", ephemeral=True)
 
-@ban.error
-async def ban_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
+def parse_duration_to_seconds(duration_str: str) -> int:
+    if not duration_str:
+        return 0
+    match = re.match(r"^(\d+)([smhd])$", duration_str.strip().lower())
+    if not match:
+        return 0
+    amount = int(match.group(1))
+    unit = match.group(2)
+    if unit == 's':
+        return amount
+    elif unit == 'm':
+        return amount * 60
+    elif unit == 'h':
+        return amount * 3600
+    elif unit == 'd':
+        return amount * 86400
+    return 0
 
 @client.tree.command(name="say", description="Let bot send the message of what you say!")
 @app_commands.describe(message="The message you want the bot to repeat.")
@@ -191,11 +179,6 @@ async def purge(
         await interaction.followup.send(f"Successfully deleted **{len(deleted)}** message(s).", ephemeral=True)
     except discord.Forbidden:
         await interaction.followup.send("I do not have permission to purge messages!", ephemeral=True)
-
-@purge.error
-async def purge_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
 
 @client.tree.command(name="timeout", description="Timeout a user.")
 @app_commands.describe(
@@ -249,11 +232,6 @@ async def timeout(
             ephemeral=True
         )
 
-@timeout.error
-async def timeout_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
-
 @client.tree.command(name="warn", description="Warn a user.")
 @app_commands.describe(
     user="User to warning.",
@@ -295,11 +273,6 @@ async def warn(
             "I do not have permission to warn this user! Check my role and ensure my role is higher than this role!",
             ephemeral=True
         )
-
-@warn.error
-async def warn_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
 
 @client.tree.command(name="ping", description="Show bot latency.")
 async def ping(interaction: discord.Interaction):
@@ -346,11 +319,6 @@ async def stick_create(
         ephemeral=True
     )
 
-@stick_create.error
-async def stick_create_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
-
 @client.tree.command(name="stick-remove", description="Remove stick message from a specific channel.")
 @app_commands.describe(
     channel="Select a channel where stick messages will be deleted."
@@ -387,11 +355,6 @@ async def stick_remove(
         ephemeral=True
     )
 
-@stick_remove.error
-async def stick_remove_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
-
 @client.tree.command(name="stick-list", description="Get the list of channels with stick messages.")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def stick_list(interaction: discord.Interaction):
@@ -422,11 +385,6 @@ async def stick_list(interaction: discord.Interaction):
 
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@stick_list.error
-async def stick_list_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
-
 @client.tree.command(name="nick", description="Change user/bots nickname.")
 @app_commands.describe(
     user="User to set nickname.",
@@ -452,10 +410,5 @@ async def nick(
             "I do not have permission to change nickname of this user!",
             ephemeral=True
         )
-
-@nick.error
-async def nick_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
 
 client.run(os.getenv("TOKEN"))
