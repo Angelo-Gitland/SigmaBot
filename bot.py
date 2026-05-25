@@ -3,6 +3,7 @@ from discord import app_commands
 import re
 import os
 import time
+from datetime import timedelta
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -41,6 +42,8 @@ class BotClient(discord.Client):
             afk_ref.delete()
 
         for mention in message.mentions:
+            if mention.id == message.author.id:
+                continue
             afk_data = db.collection("afk").document(str(mention.id)).get()
             if afk_data.exists:
                 data = afk_data.to_dict()
@@ -76,7 +79,7 @@ class BotClient(discord.Client):
                         "message_count": 0
                     })
                 else:
-                    doc_ref.update({"message_count": message_command})
+                    doc_ref.update({"message_count": message_count})
 
 client = BotClient()
 
@@ -88,10 +91,11 @@ async def afk(interaction: discord.Interaction, reason: str = "No reason provide
         "time": int(time.time())
     })
     embed = discord.Embed(
-        title=f"⏳ {interaction.user.display_name} is Afk!",
-        description=f"**Reason:** {reason}",
+        title="Status Updated",
+        description="You are now AFK!",
         color=0xF1C40F
     )
+    embed.add_field(name="Reason", value=reason)
     await interaction.response.send_message(embed=embed)
 
 @client.tree.command(name="kick", description="kick a user")
@@ -369,7 +373,7 @@ async def stick_remove(
 @client.tree.command(name="stick-list", description="Get the list of channels with stick messages.")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def stick_list(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.followup.defer(ephemeral=True)
 
     docs = db.collection("sticky").stream()
     entries = []
