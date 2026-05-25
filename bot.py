@@ -230,4 +230,18 @@ async def warn_error(interaction: discord.Interaction, error: app_commands.AppCo
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
 
+@client.tree.command(name="ping", description="Show bot latency.")
+async def ping(interaction: discord.Interaction):
+    latency_ms = round(client.latency * 1000)
+    guild_count = len(client.guilds)
+    node = "Railway-US-West"
+
+    await interaction.response.send_message(
+        f"🏓 PONG!\n"
+        f"**Cluster 436:** {latency_ms}ms\n"
+        f"**Shard 6984:** {latency_ms}ms\n"
+        f"**Guild:** {guild_count}\n"
+        f"**Node:** {node}"
+    )
+
 client.run(os.getenv("TOKEN"))
