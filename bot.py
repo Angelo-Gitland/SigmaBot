@@ -34,23 +34,20 @@ class BotClient(discord.Client):
         if afk_doc.exists:
             data = afk_doc.to_dict()
             embed = discord.Embed(
-                description=f"Welcome back {message.author.mention}! You were last seen <t:{data['time']}:R>.",
+                description=f"{message.author.mention} Welcome back! You were last seen <t:{data['time']}:R>.",
                 color=0x00FF00
             )
             await message.channel.send(embed=embed)
             afk_ref.delete()
 
         for mention in message.mentions:
-            if mention.id == message.author.id:
-                continue
-            
             afk_data = db.collection("afk").document(str(mention.id)).get()
             if afk_data.exists:
                 data = afk_data.to_dict()
                 embed = discord.Embed(
-                    title=f"💤 {mention.display_name} is AFK!",
-                    description=f"They were last seen <t:{data['time']}:R>.\n\n**Reason:** {data['reason']}",
-                    color=0xFF0000
+                    title=f"⏳ {mention.display_name} is currently AFK!",
+                    description=f"They were last seen <t:{data['time']}:R>.\n- Reason: {data['reason']}",
+                    color=0xF1C40F
                 )
                 await message.channel.send(embed=embed)
 
@@ -79,7 +76,7 @@ class BotClient(discord.Client):
                         "message_count": 0
                     })
                 else:
-                    doc_ref.update({"message_count": message_count})
+                    doc_ref.update({"message_count": message_command})
 
 client = BotClient()
 
@@ -91,11 +88,10 @@ async def afk(interaction: discord.Interaction, reason: str = "No reason provide
         "time": int(time.time())
     })
     embed = discord.Embed(
-        title="Status Updated",
-        description="You are now AFK!",
+        title=f"⏳ {interaction.user.display_name} is Afk!",
+        description=f"**Reason:** {reason}",
         color=0xF1C40F
     )
-    embed.add_field(name="Reason", value=reason)
     await interaction.response.send_message(embed=embed)
 
 @client.tree.command(name="kick", description="kick a user")
