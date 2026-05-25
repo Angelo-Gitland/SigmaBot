@@ -11,8 +11,31 @@ class BotClient(discord.Client):
 
     async def on_ready(self):
         await self.tree.sync()
+        print(f"Logged in as {self.user} | Synced commands!")
+
+    async def on_disconnect(self):
+        print("[DISCONNECT] Bot disconnected from Discord!")
+
+    async def on_resumed(self):
+        print("[RECONNECT] Bot reconnected successfully!")
+
+    async def on_error(self, event, *args, **kwargs):
+        print(f"[ERROR] An error occurred in event {event}")
+        import traceback
+        traceback.print_exc()
 
 client = BotClient()
+
+@client.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    print(f"[ERROR] Error occurred: {error}")
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send("An error occurred while running this command!", ephemeral=True)
+        else:
+            await interaction.response.send_message("An error occurred while running this command!", ephemeral=True)
+    except Exception:
+        pass
 
 @client.tree.command(name="kick", description="kick a user")
 @app_commands.describe(user="Select a members to kick.", reason="Reason to kick (Optional).")
