@@ -156,7 +156,6 @@ async def timeout(
         )
         dm_embed.title = f"⚠️ You were timed out in {interaction.guild.name}"
         dm_embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
-        dm_embed.add_field(name="", value="", inline=False)
 
         if timeout_seconds > 0:
             await user.timeout(timedelta(seconds=timeout_seconds), reason=f"Timed out by {interaction.user}: {display_reason}")
@@ -181,6 +180,53 @@ async def timeout(
 
 @timeout.error
 async def timeout_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
+
+@client.tree.command(name="warn", description="Warn a user.")
+@app_commands.describe(
+    user="User to warning.",
+    reason="Reason for warning (Optional)."
+)
+@app_commands.checks.has_permissions(moderate_members=True)
+async def warn(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    reason: str = None
+):
+    await interaction.response.defer(ephemeral=True)
+
+    display_reason = reason if reason else "No reason provided!"
+
+    try:
+        dm_embed = discord.Embed(
+            description=(
+                f"**Reason:** {display_reason}\n"
+                f"**Warned by:** {interaction.user.name} > {interaction.user.display_name}"
+            ),
+            color=0xFFCC00
+        )
+        dm_embed.title = f"⚠️ You were warned in {interaction.guild.name}!"
+        dm_embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+
+        try:
+            await user.send(embed=dm_embed)
+        except discord.Forbidden:
+            pass
+
+        await interaction.followup.send(
+            f"Successfully warned {user.mention}. Reason: {display_reason}",
+            ephemeral=True
+        )
+
+    except Exception:
+        await interaction.followup.send(
+            "I do not have permission to warn this user! Check my role and ensure my role is higher than this role!",
+            ephemeral=True
+        )
+
+@warn.error
+async def warn_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
 
