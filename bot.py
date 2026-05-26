@@ -41,35 +41,6 @@ class BotClient(discord.Client):
         if message.author.bot:
             return
 
-        # AFK return check
-        afk_doc_ref = db.collection("afk").document(str(message.author.id))
-        afk_doc = afk_doc_ref.get()
-
-        if afk_doc.exists:
-            data = afk_doc.to_dict()
-            last_seen = data.get("last_seen", "Unknown")
-            afk_doc_ref.delete()
-            embed = discord.Embed(
-                description=f"Welcome back {message.author.mention}! You were last seen `{last_seen}`.",
-                color=0x57F287
-            )
-            await message.channel.send(embed=embed)
-
-        # AFK mention check
-        if message.mentions:
-            for mentioned_user in message.mentions:
-                mentioned_doc = db.collection("afk").document(str(mentioned_user.id))
-                mentioned_data = mentioned_doc.get()
-                if mentioned_data.exists:
-                    data = mentioned_data.to_dict()
-                    reason = data.get("reason", "No reason provided")
-                    last_seen = data.get("last_seen", "Unknown")
-                    embed = discord.Embed(
-                        description=f"{mentioned_user.mention} is currently afk. They were last seen `{last_seen}`.\n- **Reason:** {reason}",
-                        color=0xED4245
-                    )
-                    await message.channel.send(embed=embed)
-
         # Sticky message check
         doc_ref = db.collection("sticky").document(str(message.channel.id))
         doc = doc_ref.get()
@@ -487,30 +458,7 @@ async def nick_error(interaction: discord.Interaction, error: app_commands.AppCo
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
 
-@client.tree.command(name="afk", description="Set your status as afk.")
-@app_commands.describe(
-    reason="Set a reason why are you afk? (Optional)"
-)
-async def afk(
-    interaction: discord.Interaction,
-    reason: str = None
-):
-    display_reason = reason if reason else "No reason provided"
-    last_seen = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-    doc_ref = db.collection("afk").document(str(interaction.user.id))
-    doc_ref.set({
-        "reason": display_reason,
-        "last_seen": last_seen
-    })
-
-    embed = discord.Embed(
-        description=f"✅ {interaction.user.mention} is now AFK!\n- **Reason:** {display_reason}",
-        color=0x99AAB5
-    )
-    await interaction.response.send_message(embed=embed)
-
-@client.tree.command(name="embed create", description="Create an embed message.")
+@client.tree.command(name="embed-create", description="Create an embed message.")
 @app_commands.describe(
     message="Set the embed message.",
     color="Set the embed color (e.g #5865F2).",
