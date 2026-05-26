@@ -2,10 +2,11 @@ import discord
 from discord import app_commands
 import re
 import os
-from datetime import timedelta
+from datetime import timedelta, timezone, datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
 
+# Firebase setup
 cred = credentials.Certificate({
     "type": "service_account",
     "project_id": os.getenv("FIREBASE_PROJECT_ID"),
@@ -18,7 +19,7 @@ db = firestore.client()
 
 class BotClient(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.all())
+        super().__init__(intents=discord.Intents.default())
         self.tree = app_commands.CommandTree(self)
 
     async def on_ready(self):
@@ -40,49 +41,36 @@ class BotClient(discord.Client):
         if message.author.bot:
             return
 
-        if message.guild:
-            censor_ref = db.collection("censor").document(str(message.guild.id))
-            censor_doc = censor_ref.get()
-            if censor_doc.exists:
-                censor_data = censor_doc.to_dict()
-                if censor_data.get("enabled", True):
-                    content_lower = message.content.lower()
-                    censor_words = censor_data.get("words", [])
-                    punishment = censor_data.get("punishment", "Delete Message")
-                    
-                    triggered = False
-                    for word in censor_words:
-                        if word.lower() in content_lower:
-                            triggered = True
-                            break
-                    
-                    if triggered:
-                        try:
-                            await message.delete()
-                        except (discord.NotFound, discord.Forbidden):
-                            pass
+        # AFK return check
+        afk_doc_ref = db.collection("afk").document(str(message.author.id))
+        afk_doc = afk_doc_ref.get()
 
-                        display_punishment = "Your message was deleted!" if punishment == "Delete Message" else punishment
-                        dm_message = f"## 🔨 You swear in {message.guild.name}!\n\nYou says a bad words in {message.guild.name}! Therefore you are punished!\n\n**🔨 Punishment: {display_punishment}**\n🛡️ Responsibe: {self.user.name}**"
-                        
-                        try:
-                            await message.author.send(dm_message)
-                        except discord.Forbidden:
-                            pass
+        if afk_doc.exists:
+            data = afk_doc.to_dict()
+            last_seen = data.get("last_seen", "Unknown")
+            afk_doc_ref.delete()
+            embed = discord.Embed(
+                description=f"Welcome back {message.author.mention}! You were last seen `{last_seen}`.",
+                color=0x57F287
+            )
+            await message.channel.send(embed=embed)
 
-                        try:
-                            if punishment == "Timeout":
-                                await message.author.timeout(timedelta(minutes=10), reason="Censor Violation")
-                            elif punishment == "Warn":
-                                pass
-                            elif punishment == "Kick":
-                                await message.author.kick(reason="Censor Violation")
-                            elif punishment == "Ban":
-                                await message.author.ban(reason="Censor Violation")
-                        except discord.Forbidden:
-                            pass
-                        return
+        # AFK mention check
+        if message.mentions:
+            for mentioned_user in message.mentions:
+                mentioned_doc = db.collection("afk").document(str(mentioned_user.id))
+                mentioned_data = mentioned_doc.get()
+                if mentioned_data.exists:
+                    data = mentioned_data.to_dict()
+                    reason = data.get("reason", "No reason provided")
+                    last_seen = data.get("last_seen", "Unknown")
+                    embed = discord.Embed(
+                        description=f"{mentioned_user.mention} is currently afk. They were last seen `{last_seen}`.\n- **Reason:** {reason}",
+                        color=0xED4245
+                    )
+                    await message.channel.send(embed=embed)
 
+        # Sticky message check
         doc_ref = db.collection("sticky").document(str(message.channel.id))
         doc = doc_ref.get()
 
@@ -461,7 +449,6 @@ async def stick_list(interaction: discord.Interaction):
         color=0x5865F2
     )
     embed.set_footer(text=f"Total: {len(entries)} sticky channel(s)")
-
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 @stick_list.error
@@ -500,37 +487,80 @@ async def nick_error(interaction: discord.Interaction, error: app_commands.AppCo
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
 
-@client.tree.command(name="censor-add", description="Create a censor/bad words that will be blocked when a users swear.")
+@client.tree.command(name="afk", description="Set your status as afk.")
 @app_commands.describe(
-    words="Create a multiple censor words with multiple lines.",
-    punishment="Punishment when users swear.",
-    toogle="Enable or Disable command."
+    reason="Set a reason why are you afk? (Optional)"
+)
+async def afk(
+    interaction: discord.Interaction,
+    reason: str = None
+):
+    display_reason = reason if reason else "No reason provided"
+    last_seen = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    doc_ref = db.collection("afk").document(str(interaction.user.id))
+    doc_ref.set({
+        "reason": display_reason,
+        "last_seen": last_seen
+    })
+
+    embed = discord.Embed(
+        description=f"✅ {interaction.user.mention} is now AFK!\n- **Reason:** {display_reason}",
+        color=0x99AAB5
+    )
+    await interaction.response.send_message(embed=embed)
+
+@client.tree.command(name="embed create", description="Create an embed message.")
+@app_commands.describe(
+    message="Set the embed message.",
+    color="Set the embed color (e.g #5865F2).",
+    channel="Channel where embed message will send (Optional).",
+    server_thumbnail="Include server thumbnail in embed message (Optional)."
 )
 @app_commands.checks.has_permissions(manage_messages=True)
-async def censor_add(
+async def embed_create(
     interaction: discord.Interaction,
-    words: str,
-    punishment: str = "Delete Message",
-    toogle: bool = True
+    message: str,
+    color: str,
+    channel: discord.TextChannel = None,
+    server_thumbnail: bool = False
 ):
     await interaction.response.defer(ephemeral=True)
 
-    word_list = [word.strip("- ").strip() for word in words.splitlines() if word.strip()]
-    
-    doc_ref = db.collection("censor").document(str(interaction.guild_id))
-    doc_ref.set({
-        "words": word_list,
-        "punishment": punishment,
-        "enabled": toogle
-    })
+    target_channel = channel if channel else interaction.channel
 
-    await interaction.followup.send(
-        f"✅ Censor list updated with {len(word_list)} words! Punishment: {punishment}. Enabled: {toogle}",
-        ephemeral=True
+    try:
+        color = color.strip().lstrip("#")
+        embed_color = int(color, 16)
+    except ValueError:
+        await interaction.followup.send(
+            "❌ Invalid color! Please use a valid hex color (e.g `#5865F2`).",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(
+        description=message,
+        color=embed_color
     )
 
-@censor_add.error
-async def censor_add_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if server_thumbnail and interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
+
+    try:
+        await target_channel.send(embed=embed)
+        await interaction.followup.send(
+            f"✅ Embed sent in {target_channel.mention}!",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "I do not have permission to send embed messages in this channel!",
+            ephemeral=True
+        )
+
+@embed_create.error
+async def embed_create_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
 
