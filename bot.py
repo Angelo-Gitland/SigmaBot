@@ -5,6 +5,7 @@ import os
 from datetime import timedelta, timezone, datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
+import aiohttp
 
 # Firebase setup
 cred = credentials.Certificate({
@@ -41,7 +42,6 @@ class BotClient(discord.Client):
         if message.author.bot:
             return
 
-        # Sticky message check
         doc_ref = db.collection("sticky").document(str(message.channel.id))
         doc = doc_ref.get()
 
@@ -511,5 +511,53 @@ async def embed_create(
 async def embed_create_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("You do not have permission to use this command!", ephemeral=True)
+
+@client.tree.command(name="pastebin", description="Paste a code into pastebin website as guest.")
+@app_commands.describe(
+    file="Attach a .txt or .lua file only."
+)
+async def pastebin(
+    interaction: discord.Interaction,
+    file: discord.Attachment
+):
+    await interaction.response.defer(ephemeral=True)
+
+    if not file.filename.endswith((".txt", ".lua")):
+        await interaction.followup.send(
+            "❌ Only `.txt` or `.lua` files are allowed!",
+            ephemeral=True
+        )
+        return
+
+    paste_title = file.filename.rsplit(".", 1)[0]
+
+    async with aiohttp.ClientSession() as session:
+        file_content = await file.read()
+        paste_code = file_content.decode("utf-8")
+
+        data = {
+            "api_option": "paste",
+            "api_dev_key": os.getenv("PASTEBIN_API_KEY"),
+            "api_paste_code": paste_code,
+            "api_paste_name": paste_title,
+            "api_paste_private": "1",
+            "api_paste_format": "lua" if file.filename.endswith(".lua") else "text"
+        }
+
+        async with session.post("https://pastebin.com/api/api_post.php", data=data) as resp:
+            result = await resp.text()
+
+            if result.startswith("https://pastebin.com/"):
+                embed = discord.Embed(
+                    title="Pastebin Upload Successful!",
+                    description=f"**Title:** {paste_title}\n**Link:** {result}",
+                    color=0x02A8F3
+                )
+                await interaction.followup.send(embed=embed, ephemeral=False)
+            else:
+                await interaction.followup.send(
+                    f"❌ Failed to upload to Pastebin! Error: `{result}`",
+                    ephemeral=True
+                )
 
 client.run(os.getenv("TOKEN"))
