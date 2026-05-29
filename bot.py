@@ -6,8 +6,9 @@ from datetime import timedelta, timezone, datetime
 import firebase_admin
 from firebase_admin import credentials, firestore
 import aiohttp
+import subprocess
+import io
 
-# Firebase setup
 cred = credentials.Certificate({
     "type": "service_account",
     "project_id": os.getenv("FIREBASE_PROJECT_ID"),
@@ -559,5 +560,58 @@ async def pastebin(
                     f"❌ Failed to upload to Pastebin! Error: `{result}`",
                     ephemeral=True
                 )
+
+@client.tree.command(name="execute-script", description="Execute a lua script code.")
+@app_commands.describe(
+    file="Attach only a .txt or .lua file.",
+    code="Execute lua code by text."
+)
+async def execute_script(
+    interaction: discord.Interaction,
+    file: discord.Attachment = None,
+    code: str = None
+):
+    await interaction.response.defer(ephemeral=False)
+
+    if not file and not code:
+        await interaction.followup.send("You must provide either a file or code!")
+        return
+
+    lua_code = ""
+
+    if file:
+        if not file.filename.endswith((".txt", ".lua")):
+            await interaction.followup.send("Only .txt or .lua files are allowed!")
+            return
+        
+        file_content = await file.read()
+        lua_code = file_content.decode("utf-8")
+    elif code:
+        lua_code = code
+
+    try:
+        process = subprocess.run(
+            ["lua", "-e", lua_code],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        output = process.stdout
+        if process.stderr:
+            output += "\n" + process.stderr
+        
+        if not output.strip():
+            output = "Code executed successfully with no output."
+
+    except Exception as e:
+        output = str(e)
+
+    full_output_message = f"```Output\n{output}\n```"
+
+    if len(full_output_message) <= 2000:
+        await interaction.followup.send(f"Successfully executed! Outputs below!\n{full_output_message}")
+    else:
+        file_obj = discord.File(io.BytesIO(output.encode("utf-8")), filename="output.txt")
+        await interaction.followup.send("Successfully executed! Outputs below!", file=file_obj)
 
 client.run(os.getenv("TOKEN"))
